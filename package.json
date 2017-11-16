@@ -49,6 +49,7 @@
   },
   "dependencies": {
     "ansi-html": "0.0.7",
+    "autodll-webpack-plugin": "0.3.5",
     "babel-core": "6.26.0",
     "babel-generator": "6.26.0",
     "babel-loader": "7.1.2",

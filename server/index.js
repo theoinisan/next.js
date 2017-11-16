@@ -19,7 +19,7 @@ import pkg from '../../package'
 import reactPkg from 'react/package'
 
 // TODO: Remove this in Next.js 5
-if (!(/^16\./.test(reactPkg.version))) {
+if (!/^16\./.test(reactPkg.version)) {
   const message = `
 Error: Next.js 4 requires React 16.
 Install React 16 with:
@@ -30,10 +30,7 @@ Install React 16 with:
   process.exit(1)
 }
 
-const internalPrefixes = [
-  /^\/_next\//,
-  /^\/static\//
-]
+const internalPrefixes = [/^\/_next\//, /^\/static\//]
 
 const blockedPages = {
   '/_document': true,
@@ -41,7 +38,15 @@ const blockedPages = {
 }
 
 export default class Server {
-  constructor ({ dir = '.', dev = false, staticMarkup = false, quiet = false, conf = null } = {}) {
+  constructor (
+    {
+      dir = '.',
+      dev = false,
+      staticMarkup = false,
+      quiet = false,
+      conf = null
+    } = {}
+  ) {
     // When in dev mode, remap the inline source maps that we generate within the webpack portion
     // of the build.
     if (dev) {
@@ -54,15 +59,22 @@ export default class Server {
     this.dev = dev
     this.quiet = quiet
     this.router = new Router()
-    this.hotReloader = dev ? this.getHotReloader(this.dir, { quiet, conf }) : null
+    this.hotReloader = dev
+      ? this.getHotReloader(this.dir, { quiet, conf })
+      : null
     this.http = null
     this.config = getConfig(this.dir, conf)
     this.dist = this.config.distDir
     if (!dev && !fs.existsSync(resolve(dir, this.dist, 'BUILD_ID'))) {
-      console.error(`> Could not find a valid build in the '${this.dist}' directory! Try building your app with 'next build' before starting the server.`)
+      console.error(
+        `> Could not find a valid build in the '${this
+          .dist}' directory! Try building your app with 'next build' before starting the server.`
+      )
       process.exit(1)
     }
-    this.buildStats = !dev ? require(join(this.dir, this.dist, 'build-stats.json')) : null
+    this.buildStats = !dev
+      ? require(join(this.dir, this.dist, 'build-stats.json'))
+      : null
     this.buildId = !dev ? this.readBuildId() : '-'
     this.renderOpts = {
       dev,
@@ -95,12 +107,11 @@ export default class Server {
     }
 
     res.statusCode = 200
-    return this.run(req, res, parsedUrl)
-      .catch((err) => {
-        if (!this.quiet) console.error(err)
-        res.statusCode = 500
-        res.end(STATUS_CODES[500])
-      })
+    return this.run(req, res, parsedUrl).catch(err => {
+      if (!this.quiet) console.error(err)
+      res.statusCode = 500
+      res.end(STATUS_CODES[500])
+    })
   }
 
   getRequestHandler () {
@@ -120,7 +131,7 @@ export default class Server {
 
     if (this.http) {
       await new Promise((resolve, reject) => {
-        this.http.close((err) => {
+        this.http.close(err => {
           if (err) return reject(err)
           return resolve()
         })
@@ -179,6 +190,22 @@ export default class Server {
         await this.serveStatic(req, res, p)
       },
 
+      '/_next/:hash/next.dll.js': async (req, res, params) => {
+        if (!this.dev) return this.send404(res)
+
+        this.handleBuildHash('next.dll.js', params.hash, res)
+        const p = join(this.dir, `${this.dist}/next.dll.js`)
+        await this.serveStatic(req, res, p)
+      },
+
+      '/_next/:hash/user.dll.js': async (req, res, params) => {
+        if (!this.dev) return this.send404(res)
+
+        this.handleBuildHash('user.dll.js', params.hash, res)
+        const p = join(this.dir, `${this.dist}/user.dll.js`)
+        await this.serveStatic(req, res, p)
+      },
+
       '/_next/:hash/app.js': async (req, res, params) => {
         if (this.dev) return this.send404(res)
 
@@ -192,7 +219,14 @@ export default class Server {
           const error = new Error('INVALID_BUILD_ID')
           const customFields = { buildIdMismatched: true }
 
-          return await renderScriptError(req, res, '/_error', error, customFields, this.renderOpts)
+          return await renderScriptError(
+            req,
+            res,
+            '/_error',
+            error,
+            customFields,
+            this.renderOpts
+          )
         }
 
         const p = join(this.dir, `${this.dist}/bundles/pages/_error.js`)
@@ -207,20 +241,41 @@ export default class Server {
           const error = new Error('INVALID_BUILD_ID')
           const customFields = { buildIdMismatched: true }
 
-          return await renderScriptError(req, res, page, error, customFields, this.renderOpts)
+          return await renderScriptError(
+            req,
+            res,
+            page,
+            error,
+            customFields,
+            this.renderOpts
+          )
         }
 
         if (this.dev) {
           try {
             await this.hotReloader.ensurePage(page)
           } catch (error) {
-            return await renderScriptError(req, res, page, error, {}, this.renderOpts)
+            return await renderScriptError(
+              req,
+              res,
+              page,
+              error,
+              {},
+              this.renderOpts
+            )
           }
 
           const compilationErr = await this.getCompilationError()
           if (compilationErr) {
             const customFields = { statusCode: 500 }
-            return await renderScriptError(req, res, page, compilationErr, customFields, this.renderOpts)
+            return await renderScriptError(
+              req,
+              res,
+              page,
+              compilationErr,
+              customFields,
+              this.renderOpts
+            )
           }
         }
 
@@ -311,7 +366,13 @@ export default class Server {
       const compilationErr = await this.getCompilationError()
       if (compilationErr) {
         res.statusCode = 500
-        return this.renderErrorToHTML(compilationErr, req, res, pathname, query)
+        return this.renderErrorToHTML(
+          compilationErr,
+          req,
+          res,
+          pathname,
+          query
+        )
       }
     }
 
@@ -339,17 +400,38 @@ export default class Server {
       const compilationErr = await this.getCompilationError()
       if (compilationErr) {
         res.statusCode = 500
-        return renderErrorToHTML(compilationErr, req, res, pathname, query, this.renderOpts)
+        return renderErrorToHTML(
+          compilationErr,
+          req,
+          res,
+          pathname,
+          query,
+          this.renderOpts
+        )
       }
     }
 
     try {
-      return await renderErrorToHTML(err, req, res, pathname, query, this.renderOpts)
+      return await renderErrorToHTML(
+        err,
+        req,
+        res,
+        pathname,
+        query,
+        this.renderOpts
+      )
     } catch (err2) {
       if (this.dev) {
         if (!this.quiet) console.error(err2)
         res.statusCode = 500
-        return renderErrorToHTML(err2, req, res, pathname, query, this.renderOpts)
+        return renderErrorToHTML(
+          err2,
+          req,
+          res,
+          pathname,
+          query,
+          this.renderOpts
+        )
       } else {
         throw err2
       }
@@ -438,7 +520,9 @@ export default class Server {
     }
 
     if (hash !== this.buildStats[filename].hash) {
-      throw new Error(`Invalid Build File Hash(${hash}) for chunk: ${filename}`)
+      throw new Error(
+        `Invalid Build File Hash(${hash}) for chunk: ${filename}`
+      )
     }
 
     res.setHeader('Cache-Control', 'max-age=31536000, immutable')

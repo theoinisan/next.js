@@ -4,6 +4,7 @@ import { realpathSync } from 'fs'
 import webpack from 'webpack'
 import glob from 'glob-promise'
 import WriteFilePlugin from 'write-file-webpack-plugin'
+import AutoDllPlugin from 'autodll-webpack-plugin'
 import FriendlyErrorsWebpackPlugin from 'friendly-errors-webpack-plugin'
 import CaseSensitivePathPlugin from 'case-sensitive-paths-webpack-plugin'
 import UglifyJSPlugin from 'uglifyjs-webpack-plugin'
@@ -17,41 +18,44 @@ import findBabelConfig from './babel/find-config'
 import rootModuleRelativePath from './root-module-relative-path'
 
 const documentPage = join('pages', '_document.js')
-const defaultPages = [
-  '_error.js',
-  '_document.js'
-]
+const defaultPages = ['_error.js', '_document.js']
 const nextPagesDir = join(__dirname, '..', '..', 'pages')
 const nextNodeModulesDir = join(__dirname, '..', '..', '..', 'node_modules')
-const interpolateNames = new Map(defaultPages.map((p) => {
-  return [join(nextPagesDir, p), `dist/pages/${p}`]
-}))
+const interpolateNames = new Map(
+  defaultPages.map(p => {
+    return [join(nextPagesDir, p), `dist/pages/${p}`]
+  })
+)
 
 const relativeResolve = rootModuleRelativePath(require)
 
-export default async function createCompiler (dir, { buildId, dev = false, quiet = false, buildDir, conf = null } = {}) {
+export default async function createCompiler (
+  dir,
+  { buildId, dev = false, quiet = false, buildDir, conf = null } = {}
+) {
   dir = realpathSync(resolve(dir))
   const config = getConfig(dir, conf)
-  const defaultEntries = dev ? [
-    join(__dirname, '..', '..', 'client', 'webpack-hot-middleware-client'),
-    join(__dirname, '..', '..', 'client', 'on-demand-entries-client')
-  ] : []
+  const defaultEntries = dev
+    ? [
+      join(__dirname, '..', '..', 'client', 'webpack-hot-middleware-client'),
+      join(__dirname, '..', '..', 'client', 'on-demand-entries-client')
+    ]
+    : []
   const mainJS = dev
-    ? require.resolve('../../client/next-dev') : require.resolve('../../client/next')
+    ? require.resolve('../../client/next-dev')
+    : require.resolve('../../client/next')
 
   let totalPages
 
   const entry = async () => {
     const entries = {
-      'main.js': [
-        ...defaultEntries,
-        ...config.clientBootstrap || [],
-        mainJS
-      ]
+      'main.js': [...defaultEntries, ...(config.clientBootstrap || []), mainJS]
     }
 
     const pages = await glob(config.pagesGlobPattern, { cwd: dir })
-    const devPages = pages.filter((p) => p === 'pages/_document.js' || p === 'pages/_error.js')
+    const devPages = pages.filter(
+      p => p === 'pages/_document.js' || p === 'pages/_error.js'
+    )
 
     // In the dev environment, on-demand-entry-handler will take care of
     // managing pages.
@@ -72,7 +76,7 @@ export default async function createCompiler (dir, { buildId, dev = false, quiet
       }
     }
 
-    totalPages = pages.filter((p) => p !== documentPage).length
+    totalPages = pages.filter(p => p !== documentPage).length
 
     return entries
   }
@@ -85,6 +89,34 @@ export default async function createCompiler (dir, { buildId, dev = false, quiet
         customInterpolateName (url, name, opts) {
           return interpolateNames.get(this.resourcePath) || url
         }
+      }
+    }),
+    new AutoDllPlugin({
+      context: join(__dirname, '../../..'),
+      inject: true,
+      filename: '[name].dll.js',
+      path: './',
+      entry: {
+        next: ['react', 'react-dom']
+      }
+    }),
+    // User DLL
+    new AutoDllPlugin({
+      context: dir,
+      inject: true,
+      filename: '[name].dll.js',
+      path: './',
+      entry: {
+        user: [
+          // For simplicity sake, I hardcoded the user's dependencies for the `with-redux` example
+          // A better approach will be to read it from the user's package.json
+          'react-redux',
+          'redux',
+          'redux-thunk',
+          'react-draft-wysiwyg',
+          'react-apollo',
+          'moment'
+        ]
       }
     }),
     new WriteFilePlugin({
@@ -100,7 +132,10 @@ export default async function createCompiler (dir, { buildId, dev = false, quiet
         // We need to move react-dom explicitly into common chunks.
         // Otherwise, if some other page or module uses it, it might
         // included in that bundle too.
-        if (module.context && module.context.indexOf(`${sep}react-dom${sep}`) >= 0) {
+        if (
+          module.context &&
+          module.context.indexOf(`${sep}react-dom${sep}`) >= 0
+        ) {
           return true
         }
 
@@ -128,7 +163,9 @@ export default async function createCompiler (dir, { buildId, dev = false, quiet
       filename: 'manifest.js'
     }),
     new webpack.DefinePlugin({
-      'process.env.NODE_ENV': JSON.stringify(dev ? 'development' : 'production')
+      'process.env.NODE_ENV': JSON.stringify(
+        dev ? 'development' : 'production'
+      )
     }),
     new PagesPlugin(),
     new DynamicChunksPlugin(),
@@ -161,7 +198,7 @@ export default async function createCompiler (dir, { buildId, dev = false, quiet
 
   const nodePathList = (process.env.NODE_PATH || '')
     .split(process.platform === 'win32' ? ';' : ':')
-    .filter((p) => !!p)
+    .filter(p => !!p)
 
   const mainBabelOptions = {
     cacheDirectory: true,
@@ -186,112 +223,127 @@ export default async function createCompiler (dir, { buildId, dev = false, quiet
     mainBabelOptions.presets.push(require.resolve('./babel/preset'))
   }
 
-  const rules = (dev ? [{
-    test: /\.js(\?[^?]*)?$/,
-    loader: 'hot-self-accept-loader',
-    include: [
-      join(dir, 'pages'),
-      nextPagesDir
-    ]
-  }, {
-    test: /\.js(\?[^?]*)?$/,
-    loader: 'react-hot-loader/webpack',
-    exclude: /node_modules/
-  }] : [])
-  .concat([{
-    test: /\.json$/,
-    loader: 'json-loader'
-  }, {
-    test: /\.(js|json)(\?[^?]*)?$/,
-    loader: 'emit-file-loader',
-    include: [dir, nextPagesDir],
-    exclude (str) {
-      return /node_modules/.test(str) && str.indexOf(nextPagesDir) !== 0
-    },
-    options: {
-      name: 'dist/[path][name].[ext]',
-      // By default, our babel config does not transpile ES2015 module syntax because
-      // webpack knows how to handle them. (That's how it can do tree-shaking)
-      // But Node.js doesn't know how to handle them. So, we have to transpile them here.
-      transform ({ content, sourceMap, interpolatedName }) {
-        // Only handle .js files
-        if (!(/\.js$/.test(interpolatedName))) {
-          return { content, sourceMap }
-        }
-
-        const transpiled = babelCore.transform(content, {
-          babelrc: false,
-          sourceMaps: dev ? 'both' : false,
-          // Here we need to resolve all modules to the absolute paths.
-          // Earlier we did it with the babel-preset.
-          // But since we don't transpile ES2015 in the preset this is not resolving.
-          // That's why we need to do it here.
-          // See more: https://github.com/zeit/next.js/issues/951
-          plugins: [
-            [require.resolve('babel-plugin-transform-es2015-modules-commonjs')],
-            [
-              require.resolve('babel-plugin-module-resolver'),
-              {
-                alias: {
-                  'babel-runtime': relativeResolve('babel-runtime/package'),
-                  'next/link': relativeResolve('../../lib/link'),
-                  'next/prefetch': relativeResolve('../../lib/prefetch'),
-                  'next/css': relativeResolve('../../lib/css'),
-                  'next/dynamic': relativeResolve('../../lib/dynamic'),
-                  'next/head': relativeResolve('../../lib/head'),
-                  'next/document': relativeResolve('../../server/document'),
-                  'next/router': relativeResolve('../../lib/router'),
-                  'next/error': relativeResolve('../../lib/error'),
-                  'styled-jsx/style': relativeResolve('styled-jsx/style')
-                }
-              }
-            ]
-          ],
-          inputSourceMap: sourceMap
-        })
-
-        // Strip ?entry to map back to filesystem and work with iTerm, etc.
-        let { map } = transpiled
-        let output = transpiled.code
-
-        if (map) {
-          let nodeMap = Object.assign({}, map)
-          nodeMap.sources = nodeMap.sources.map((source) => source.replace(/\?entry/, ''))
-          delete nodeMap.sourcesContent
-
-          // Output explicit inline source map that source-map-support can pickup via requireHook mode.
-          // Since these are not formal chunks, the devtool infrastructure in webpack does not output
-          // a source map for these files.
-          const sourceMapUrl = new Buffer(JSON.stringify(nodeMap), 'utf-8').toString('base64')
-          output = `${output}\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,${sourceMapUrl}`
-        }
-
-        return {
-          content: output,
-          sourceMap: transpiled.map
-        }
+  const rules = (dev
+    ? [
+      {
+        test: /\.js(\?[^?]*)?$/,
+        loader: 'hot-self-accept-loader',
+        include: [join(dir, 'pages'), nextPagesDir]
+      },
+      {
+        test: /\.js(\?[^?]*)?$/,
+        loader: 'react-hot-loader/webpack',
+        exclude: /node_modules/
       }
-    }
-  }, {
-    loader: 'babel-loader',
-    include: nextPagesDir,
-    exclude (str) {
-      return /node_modules/.test(str) && str.indexOf(nextPagesDir) !== 0
-    },
-    options: {
-      babelrc: false,
-      cacheDirectory: true,
-      presets: [require.resolve('./babel/preset')]
-    }
-  }, {
-    test: /\.js(\?[^?]*)?$/,
-    loader: 'babel-loader',
-    include: [dir],
-    exclude (str) {
-      return /node_modules/.test(str)
-    },
-    options: mainBabelOptions
-  }])
+    ]
+    : []).concat([
+      {
+        test: /\.json$/,
+        loader: 'json-loader'
+      },
+      {
+        test: /\.(js|json)(\?[^?]*)?$/,
+        loader: 'emit-file-loader',
+        include: [dir, nextPagesDir],
+        exclude (str) {
+          return /node_modules/.test(str) && str.indexOf(nextPagesDir) !== 0
+        },
+        options: {
+          name: 'dist/[path][name].[ext]',
+        // By default, our babel config does not transpile ES2015 module syntax because
+        // webpack knows how to handle them. (That's how it can do tree-shaking)
+        // But Node.js doesn't know how to handle them. So, we have to transpile them here.
+          transform ({ content, sourceMap, interpolatedName }) {
+          // Only handle .js files
+            if (!/\.js$/.test(interpolatedName)) {
+              return { content, sourceMap }
+            }
+
+            const transpiled = babelCore.transform(content, {
+              babelrc: false,
+              sourceMaps: dev ? 'both' : false,
+            // Here we need to resolve all modules to the absolute paths.
+            // Earlier we did it with the babel-preset.
+            // But since we don't transpile ES2015 in the preset this is not resolving.
+            // That's why we need to do it here.
+            // See more: https://github.com/zeit/next.js/issues/951
+              plugins: [
+                [
+                  require.resolve(
+                  'babel-plugin-transform-es2015-modules-commonjs'
+                )
+                ],
+                [
+                  require.resolve('babel-plugin-module-resolver'),
+                  {
+                    alias: {
+                      'babel-runtime': relativeResolve('babel-runtime/package'),
+                      'next/link': relativeResolve('../../lib/link'),
+                      'next/prefetch': relativeResolve('../../lib/prefetch'),
+                      'next/css': relativeResolve('../../lib/css'),
+                      'next/dynamic': relativeResolve('../../lib/dynamic'),
+                      'next/head': relativeResolve('../../lib/head'),
+                      'next/document': relativeResolve('../../server/document'),
+                      'next/router': relativeResolve('../../lib/router'),
+                      'next/error': relativeResolve('../../lib/error'),
+                      'styled-jsx/style': relativeResolve('styled-jsx/style')
+                    }
+                  }
+                ]
+              ],
+              inputSourceMap: sourceMap
+            })
+
+          // Strip ?entry to map back to filesystem and work with iTerm, etc.
+            let { map } = transpiled
+            let output = transpiled.code
+
+            if (map) {
+              let nodeMap = Object.assign({}, map)
+              nodeMap.sources = nodeMap.sources.map(source =>
+              source.replace(/\?entry/, '')
+            )
+              delete nodeMap.sourcesContent
+
+            // Output explicit inline source map that source-map-support can pickup via requireHook mode.
+            // Since these are not formal chunks, the devtool infrastructure in webpack does not output
+            // a source map for these files.
+              const sourceMapUrl = new Buffer(
+              JSON.stringify(nodeMap),
+              'utf-8'
+            ).toString('base64')
+              output = `${output}\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,${sourceMapUrl}`
+            }
+
+            return {
+              content: output,
+              sourceMap: transpiled.map
+            }
+          }
+        }
+      },
+      {
+        loader: 'babel-loader',
+        include: nextPagesDir,
+        exclude (str) {
+          return /node_modules/.test(str) && str.indexOf(nextPagesDir) !== 0
+        },
+        options: {
+          babelrc: false,
+          cacheDirectory: true,
+          presets: [require.resolve('./babel/preset')]
+        }
+      },
+      {
+        test: /\.js(\?[^?]*)?$/,
+        loader: 'babel-loader',
+        include: [dir],
+        exclude (str) {
+          return /node_modules/.test(str)
+        },
+        options: mainBabelOptions
+      }
+    ])
 
   let webpackConfig = {
     context: dir,
@@ -314,11 +366,7 @@ export default async function createCompiler (dir, { buildId, dev = false, quiet
       chunkFilename: '[name]'
     },
     resolve: {
-      modules: [
-        nextNodeModulesDir,
-        'node_modules',
-        ...nodePathList
-      ]
+      modules: [nextNodeModulesDir, 'node_modules', ...nodePathList]
     },
     resolveLoader: {
       modules: [
@@ -337,7 +385,9 @@ export default async function createCompiler (dir, { buildId, dev = false, quiet
   }
 
   if (config.webpack) {
-    console.log(`> Using "webpack" config function defined in ${config.configOrigin}.`)
+    console.log(
+      `> Using "webpack" config function defined in ${config.configOrigin}.`
+    )
     webpackConfig = await config.webpack(webpackConfig, { buildId, dev })
   }
   return webpack(webpackConfig)
